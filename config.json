@@ -1,0 +1,14 @@
+{
+  "watch_roots": [
+    "/mnt/mbbu_fab/MB_QA/Disc 首件檢查/Tutti/1. 生化盤",
+    "/mnt/mbbu_fab/MB_QA/Disc 首件檢查/Tutti/2. 比濁盤",
+    "/mnt/mbbu_fab/MB_QA/Disc 首件檢查/Tutti/3. ELISA盤",
+    "/mnt/mbbu_fab/MB_QA/Disc 首件檢查/Tutti/4. 凝血盤"
+  ],
+  "upload_url": "https://52-192-28-39.sslip.io/api/assayprocess/upload-assay-process-csv",
+  "manifest_path": "upload_manifest.json",
+  "stable_check_seconds": 2,
+  "debounce_seconds": 5,
+  "request_timeout_seconds": 120,
+  "rescan_interval_seconds": 300
+}

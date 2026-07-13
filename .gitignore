@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Logs
+*.log
+
+# State files
+*_state.json
+.beads_inv_state.json
+
+# Secrets
+*.pem
+
+# Manifests (runtime generated)
+upload_manifest.json
+tutti_pur_baseline_manifest.json

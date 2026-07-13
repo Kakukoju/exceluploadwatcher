@@ -1,0 +1,40 @@
+{
+  "watch_targets": [
+    {
+      "name": "marker_pre_eqn",
+      "watch_dir": "/mnt/reagent_rd/0. Tutti/Tutti_各marker給線Template",
+      "s3_prefix": "Tutti/marker_pre_eqn/",
+      "db_table": "tuttiprequn"
+    },
+    {
+      "name": "pur_baseline",
+      "watch_dir": "/mnt/reagent_rd/0. Tutti/生產給線",
+      "s3_prefix": "Tutti/Pur_baseline/",
+      "db_table": "tuttiprueqn"
+    },
+    {
+      "name": "real_assign",
+      "watch_dir": "/mnt/reagent_rd/0. Tutti",
+      "file_pattern": ".*外測值總表.*\\.xlsx$",
+      "s3_prefix": "Tutti/real_assign/",
+      "db_table": "tuttirealassign"
+    },
+    {
+      "name": "fw_calvalue",
+      "watch_dir": "/mnt/reagent_rd/0. Tutti/2. Tutti FW 相關檔案",
+      "file_pattern": "Tutti-計算值\\.xlsx$",
+      "s3_prefix": "Tutti/FWrelated/",
+      "db_table": "calvalue"
+    }
+  ],
+  "s3_upload_url": "https://52-192-28-39.sslip.io/api/assayprocess/tutti/upload-to-s3",
+  "ai_gateway_url": "https://52-192-28-39.sslip.io/api/assayprocess/tutti/analyze-content",
+  "s3_bucket": "beads-photos-harry",
+  "ec2_host": "52-192-28-39.sslip.io",
+  "manifest_path": "tutti_pur_baseline_manifest.json",
+  "db_name": "tutti_pur_baseline.db",
+  "stable_check_seconds": 3,
+  "debounce_seconds": 5,
+  "request_timeout_seconds": 120,
+  "rescan_interval_seconds": 300
+}

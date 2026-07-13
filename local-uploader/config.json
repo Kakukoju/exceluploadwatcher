@@ -1,0 +1,12 @@
+{
+  "api_url": "https://52-192-28-39.sslip.io/qc-web-api/api/excel-import/upload-batch",
+  "watch_dirs": [
+    "/mnt/mbbu_fab/MB_QA/Dora/6.QBi Beads IPQC",
+    "/mnt/mbbu_fab/MB_QA/Dora/2.Disk A"
+  ],
+  "scheduled_time": "00:30",
+  "debounce_seconds": 5,
+  "chunk_size": 10,
+  "current_year_only": true,
+  "log_file": "excel_uploader.log"
+}
