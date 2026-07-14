@@ -9,6 +9,7 @@ __pycache__/
 # State files
 *_state.json
 .beads_inv_state.json
+.ai_remediation_ts
 
 # Secrets
 *.pem

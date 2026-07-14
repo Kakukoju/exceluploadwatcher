@@ -44,13 +44,38 @@ except ImportError:
 import re
 import subprocess
 
-AI_GATEWAY_URL = "http://127.0.0.1:18790/v1/chat/completions"
+AI_GATEWAY_URL = "https://52-192-28-39.sslip.io/ai-gateway/v1/chat/completions"
+AI_GATEWAY_API_KEY = "beadsops-ai-2026"
+AI_GATEWAY_MODEL = "claude-haiku"
 
 # 白名單動作：這些動作 AI 可以直接執行，不需人工審批
-WHITELISTED_ACTIONS = {"retry_upload", "kill_process", "restart_service", "wait"}
+WHITELISTED_ACTIONS = {"retry_upload", "kill_process", "wait"}
 
 # 服務名稱（用於 systemctl --user）
 SERVICE_NAME = "excel-uploader.service"
+
+# 防循環：記錄最後一次 AI remediation 的時間，避免 restart 後立即再次觸發
+_LAST_AI_REMEDIATION_FILE = Path(__file__).parent / ".ai_remediation_ts"
+_AI_COOLDOWN_SECONDS = 600  # 10 分鐘內不重複觸發 AI 修復
+
+
+def _is_in_cooldown() -> bool:
+    """檢查是否在 AI 修復冷卻期內（防止 restart_service 造成無限循環）。"""
+    try:
+        if _LAST_AI_REMEDIATION_FILE.exists():
+            last_ts = float(_LAST_AI_REMEDIATION_FILE.read_text().strip())
+            return (time.time() - last_ts) < _AI_COOLDOWN_SECONDS
+    except Exception:
+        pass
+    return False
+
+
+def _mark_remediation():
+    """記錄 AI 修復觸發時間。"""
+    try:
+        _LAST_AI_REMEDIATION_FILE.write_text(str(time.time()))
+    except Exception:
+        pass
 
 
 def ask_ai_gateway(error_info: str, filepaths: list[str]) -> dict:
@@ -102,8 +127,12 @@ def ask_ai_gateway(error_info: str, filepaths: list[str]) -> dict:
     try:
         resp = requests.post(
             AI_GATEWAY_URL,
+            headers={
+                "X-API-Key": AI_GATEWAY_API_KEY,
+                "Content-Type": "application/json",
+            },
             json={
-                "model": "default",
+                "model": AI_GATEWAY_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
             },
@@ -135,14 +164,21 @@ def execute_actions(actions: list[dict], filepaths: list[str], context: str) -> 
     """
     執行 AI 建議的動作列表。
     白名單動作直接執行，非白名單動作送 Teams 通知等待人工審批。
-    回傳 {"executed": [...], "pending_approval": [...], "retry_result": ...}
+    restart_service 特殊處理：只在重試成功或沒有重試時執行，避免循環。
+    回傳 {"executed": [...], "pending_approval": [...], "retry_result": ..., "should_restart": bool}
     """
     executed = []
     pending_approval = []
     retry_result = None
+    should_restart = False
 
     for action in actions:
         action_type = action.get("type", "unknown")
+
+        # restart_service 延後處理（避免在重試失敗時 restart 造成循環）
+        if action_type == "restart_service":
+            should_restart = True
+            continue
 
         if action_type not in WHITELISTED_ACTIONS:
             # 非白名單 → 通知 Teams 等待審批
@@ -178,7 +214,6 @@ def execute_actions(actions: list[dict], filepaths: list[str], context: str) -> 
             elif action_type == "kill_process":
                 pattern = action.get("pattern", "excel_uploader")
                 log.info(f"[Action] Kill process matching: {pattern}")
-                # 只殺匹配的 python 程序，排除自己
                 result = subprocess.run(
                     ["pkill", "-f", pattern],
                     capture_output=True, text=True, timeout=10,
@@ -187,17 +222,6 @@ def execute_actions(actions: list[dict], filepaths: list[str], context: str) -> 
                     "type": "kill_process",
                     "pattern": pattern,
                     "status": "done" if result.returncode == 0 else "no_match",
-                })
-
-            elif action_type == "restart_service":
-                log.info(f"[Action] 重啟服務: {SERVICE_NAME}")
-                result = subprocess.run(
-                    ["systemctl", "--user", "restart", SERVICE_NAME],
-                    capture_output=True, text=True, timeout=30,
-                )
-                executed.append({
-                    "type": "restart_service",
-                    "status": "done" if result.returncode == 0 else f"failed: {result.stderr[:100]}",
                 })
 
         except Exception as e:
@@ -212,6 +236,7 @@ def execute_actions(actions: list[dict], filepaths: list[str], context: str) -> 
         "executed": executed,
         "pending_approval": pending_approval,
         "retry_result": retry_result,
+        "should_restart": should_restart,
     }
 
 
@@ -403,9 +428,21 @@ def upload_with_ai_retry(filepaths: list[str], context: str = "排程上傳") ->
         # 全部成功，不需通知
         return result
 
+    # === 防循環檢查 ===
+    if _is_in_cooldown():
+        log.info("[AI] 在冷卻期內，跳過 AI 修復，直接通知錯誤")
+        send_line_message(
+            f"⚠️ [{context}] 上傳有 {len(result['errors'])} 個錯誤（AI 冷卻中，不重複修復）\n"
+            f"成功: {result.get('imported_files', 0)}/{result.get('total_files', 0)} 檔\n"
+            f"錯誤: {result['errors'][0][:80]}",
+            source="excel_uploader",
+        )
+        return result
+
     # === 有錯誤，送 AI Gateway 分析 ===
     error_info = "\n".join(result["errors"][:5])
     log.info(f"[AI] 上傳有錯誤，送 AI Gateway 分析...")
+    _mark_remediation()  # 標記觸發時間
 
     ai_response = ask_ai_gateway(error_info, filepaths)
     analysis = ai_response.get("analysis", "N/A")
@@ -429,6 +466,7 @@ def upload_with_ai_retry(filepaths: list[str], context: str = "排程上傳") ->
     executed = exec_result["executed"]
     pending = exec_result["pending_approval"]
     retry_result = exec_result["retry_result"]
+    should_restart = exec_result["should_restart"]
 
     # === 根據執行結果通知 ===
     if retry_result and not retry_result.get("errors"):
@@ -454,11 +492,13 @@ def upload_with_ai_retry(filepaths: list[str], context: str = "排程上傳") ->
         )
         if pending:
             msg += f"\n⏳ 待審批動作: {', '.join(a.get('type') for a in pending)}"
+        if should_restart:
+            msg += "\n🔄 AI 建議 restart，但重試失敗故不執行（避免循環）"
         send_line_message(msg, source="excel_uploader")
         return retry_result
 
     else:
-        # 沒有 retry 動作（可能只有 kill/restart 或全部需審批）
+        # 沒有 retry 動作（可能只有 kill 或全部需審批）
         msg = (
             f"⚠️ [{context}] 上傳失敗，AI 已執行部分修復\n"
             f"🤖 分析: {analysis}\n"
@@ -468,7 +508,16 @@ def upload_with_ai_retry(filepaths: list[str], context: str = "排程上傳") ->
         if pending:
             msg += f"\n⏳ 待審批動作: {', '.join(a.get('type') for a in pending)}"
         send_line_message(msg, source="excel_uploader")
-        return result
+
+        # 只有在沒有 retry（或 retry 成功）時才允許 restart
+        if should_restart:
+            log.info(f"[Action] 重啟服務: {SERVICE_NAME}")
+            subprocess.Popen(
+                ["systemctl", "--user", "restart", SERVICE_NAME],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
+    return result
 
 
 # ─── Scheduled Full Upload ────────────────────────────────────────────────────
